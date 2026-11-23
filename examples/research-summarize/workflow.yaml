@@ -1,0 +1,49 @@
+# Plan -> fan out research per subtopic -> synthesize a brief.
+name: research-summarize
+description: Break a topic into subtopics, research each in parallel, and write a cited brief.
+inputs: [topic]
+
+defaults:
+  model: claude-sonnet-5-5
+  timeout: 90s
+  retry:
+    max_attempts: 3
+    backoff: 1s
+    max_backoff: 20s
+
+steps:
+  - id: plan
+    kind: llm
+    output: json
+    system: You are a research planner. Reply with JSON only.
+    prompt: |
+      Plan research on: {{ .input.topic }}
+      Return {"subtopics": [...]} with exactly three short, non-overlapping subtopics.
+
+  - id: research
+    kind: map
+    depends_on: [plan]
+    over: steps.plan.output.subtopics
+    concurrency: 3
+    step:
+      kind: llm
+      max_tokens: 1024
+      prompt: |
+        Write a five-sentence research note on "{{ .item }}" in the context of {{ .input.topic }}.
+
+  - id: stats
+    kind: tool
+    depends_on: [research]
+    tool: word_count
+    args:
+      text: '{{ join " " .steps.research.output }}'
+
+  - id: brief
+    kind: llm
+    depends_on: [research, stats]
+    prompt: |
+      Synthesize a one-paragraph executive brief on {{ .input.topic }} from these notes
+      ({{ .steps.stats.output.words }} words total):
+      {{ range $i, $note := .steps.research.output }}
+      [{{ $i }}] {{ $note }}
+      {{ end }}

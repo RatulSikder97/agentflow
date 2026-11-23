@@ -1,0 +1,17 @@
+# Deterministic replies for the fake LLM (AGENTFLOW_LLM=fake / afctl -llm fake).
+# A rule matches when the system prompt + user prompt contain every string in
+# `contains`. Unmatched prompts get an echo of their first line.
+rules:
+  # research-summarize: planner
+  - contains: ["Plan research on:"]
+    reply: |
+      ```json
+      {"subtopics": ["model architectures", "training data and evaluation", "deployment economics"]}
+      ```
+  # support-triage: classifier
+  - contains: ["Classify the support ticket", "refund"]
+    reply: '{"category": "billing", "priority": "high", "reason": "customer requests a refund"}'
+  - contains: ["Classify the support ticket", "error"]
+    reply: '{"category": "technical", "priority": "normal", "reason": "reports an error"}'
+  - contains: ["Classify the support ticket"]
+    reply: '{"category": "general", "priority": "low", "reason": "no specific signal"}'

@@ -1,0 +1,63 @@
+# Classify a ticket -> route to a specialist reply -> record the resolution.
+name: support-triage
+description: Classify an incoming support ticket, draft a reply from the right specialist, and record it.
+inputs: [ticket_id, subject, body]
+
+defaults:
+  timeout: 60s
+
+steps:
+  - id: classify
+    kind: llm
+    output: json
+    max_tokens: 256
+    system: You are a support triage classifier. Reply with JSON only.
+    prompt: |
+      Classify the support ticket.
+      Categories: billing, technical, general. Priority: low, normal, high.
+      Return {"category": "...", "priority": "...", "reason": "..."}.
+
+      Subject: {{ .input.subject }}
+      Body: {{ .input.body }}
+
+  - id: route
+    kind: branch
+    depends_on: [classify]
+    cases:
+      - when: '{{ eq .steps.classify.output.category "billing" }}'
+        then: [billing_reply]
+      - when: '{{ eq .steps.classify.output.category "technical" }}'
+        then: [technical_reply]
+    default: [general_reply]
+
+  - id: billing_reply
+    kind: llm
+    depends_on: [route]
+    system: You are a billing specialist. Be precise about refunds and invoices.
+    prompt: "Draft a reply to: {{ .input.subject }} -- {{ .input.body }}"
+
+  - id: technical_reply
+    kind: llm
+    depends_on: [route]
+    system: You are a senior support engineer. Ask for logs when needed.
+    prompt: "Draft a reply to: {{ .input.subject }} -- {{ .input.body }}"
+
+  - id: general_reply
+    kind: llm
+    depends_on: [route]
+    prompt: "Draft a friendly reply to: {{ .input.subject }} -- {{ .input.body }}"
+
+  # Runs once whichever reply branch was taken has finished; untaken
+  # branches are "skipped" and do not block it.
+  - id: record
+    kind: tool
+    depends_on: [billing_reply, technical_reply, general_reply]
+    tool: echo
+    retry:
+      max_attempts: 5
+    args:
+      ticket_id: "{{ .input.ticket_id }}"
+      category: "{{ .steps.classify.output.category }}"
+      priority: "{{ .steps.classify.output.priority }}"
+      route: '{{ index .steps.route.output.taken 0 }}'
+      reply: '{{ with index .steps "billing_reply" }}{{ .output }}{{ end }}{{ with index .steps "technical_reply" }}{{ .output }}{{ end }}{{ with index .steps "general_reply" }}{{ .output }}{{ end }}'
