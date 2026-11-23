@@ -1,0 +1,56 @@
+# Full stack: Postgres + Redis + API server + 2 workers.
+#   docker compose up --build
+# Uses the deterministic fake LLM by default. For real model calls:
+#   AGENTFLOW_LLM=anthropic ANTHROPIC_API_KEY=... docker compose up --build
+x-agentflow-env: &agentflow-env
+  DATABASE_URL: postgres://agentflow:agentflow@postgres:5432/agentflow?sslmode=disable
+  REDIS_URL: redis://redis:6379/0
+  AGENTFLOW_LLM: ${AGENTFLOW_LLM:-fake}
+  AGENTFLOW_FAKE_FIXTURES: /examples/fake-llm.yaml
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: agentflow
+      POSTGRES_PASSWORD: agentflow
+      POSTGRES_DB: agentflow
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentflow"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  server:
+    build: .
+    image: agentflow:local
+    environment:
+      <<: *agentflow-env
+      AGENTFLOW_WORKERS: "0"
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker:
+    image: agentflow:local
+    entrypoint: ["/usr/local/bin/agentflow-worker"]
+    environment: *agentflow-env
+    deploy:
+      replicas: 2
+    depends_on:
+      server: {condition: service_started}
+
+volumes:
+  pgdata:
